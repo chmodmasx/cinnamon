@@ -1,0 +1,3 @@
+[D-BUS Service]
+Name=org.Cinnamon.VideoWallpaper
+Exec=/usr/share/cinnamon/cinnamon-video-wallpaper/cinnamon-video-wallpaper.py

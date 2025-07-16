@@ -3,6 +3,7 @@
 const Gio = imports.gi.Gio;
 const Lang = imports.lang;
 const Meta = imports.gi.Meta;
+const GLib = imports.gi.GLib;
 
 const LOGGING = false;
 
@@ -32,6 +33,17 @@ var BackgroundManager = class {
 
         this.picture_opacity = this._gnomeSettings.get_int("picture-opacity");
         this._gnomeSettings.connect("changed::picture-opacity", Lang.bind(this, this._onPictureOpacityChanged));
+
+        // Video wallpaper support
+        this.video_wallpaper_enabled = this._cinnamonSettings.get_boolean("video-wallpaper-enabled");
+        this._cinnamonSettings.connect("changed::video-wallpaper-enabled", Lang.bind(this, this._onVideoWallpaperEnabledChanged));
+        
+        this.video_wallpaper_uri = this._cinnamonSettings.get_string("video-wallpaper-uri");
+        this._cinnamonSettings.connect("changed::video-wallpaper-uri", Lang.bind(this, this._onVideoWallpaperUriChanged));
+        
+        // D-Bus proxy for video wallpaper service
+        this._videoWallpaperProxy = null;
+        this._initVideoWallpaperProxy();
     }
 
     showBackground() {
@@ -128,5 +140,85 @@ var BackgroundManager = class {
             }
             this.picture_opacity = newValue;
         }
+    }
+
+    _initVideoWallpaperProxy() {
+        try {
+            this._videoWallpaperProxy = Gio.DBusProxy.new_for_bus_sync(
+                Gio.BusType.SESSION,
+                Gio.DBusProxyFlags.NONE,
+                null,
+                "org.Cinnamon.VideoWallpaper",
+                "/org/Cinnamon/VideoWallpaper",
+                "org.Cinnamon.VideoWallpaper",
+                null
+            );
+        } catch (e) {
+            if (LOGGING) global.log("BackgroundManager: Could not connect to video wallpaper service: " + e.message);
+        }
+    }
+
+    _onVideoWallpaperEnabledChanged(schema, key) {
+        let oldValue = this.video_wallpaper_enabled;
+        let newValue = this._cinnamonSettings.get_boolean(key);
+        if (oldValue != newValue) {
+            if (LOGGING) global.log("BackgroundManager: %s changed (%s --> %s)".format(key, oldValue, newValue));
+            this.video_wallpaper_enabled = newValue;
+            
+            if (newValue) {
+                this._startVideoWallpaperService();
+            } else {
+                this._stopVideoWallpaperService();
+            }
+        }
+    }
+
+    _onVideoWallpaperUriChanged(schema, key) {
+        let oldValue = this.video_wallpaper_uri;
+        let newValue = this._cinnamonSettings.get_string(key);
+        if (oldValue != newValue) {
+            if (LOGGING) global.log("BackgroundManager: %s changed (%s --> %s)".format(key, oldValue, newValue));
+            this.video_wallpaper_uri = newValue;
+            
+            if (this.video_wallpaper_enabled && this._videoWallpaperProxy) {
+                try {
+                    this._videoWallpaperProxy.call_sync("setVideo", GLib.Variant.new("(s)", [newValue]), Gio.DBusCallFlags.NONE, -1, null);
+                } catch (e) {
+                    if (LOGGING) global.log("BackgroundManager: Error setting video: " + e.message);
+                }
+            }
+        }
+    }
+
+    _startVideoWallpaperService() {
+        try {
+            // Start the video wallpaper service
+            GLib.spawn_async(null, 
+                ["python3", "/usr/share/cinnamon/cinnamon-video-wallpaper/cinnamon-video-wallpaper.py"], 
+                null, 
+                GLib.SpawnFlags.SEARCH_PATH | GLib.SpawnFlags.DO_NOT_REAP_CHILD,
+                null);
+            
+            // Reconnect to the service after a short delay
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 1000, Lang.bind(this, function() {
+                this._initVideoWallpaperProxy();
+                return false;
+            }));
+            
+            if (LOGGING) global.log("BackgroundManager: Started video wallpaper service");
+        } catch (e) {
+            if (LOGGING) global.log("BackgroundManager: Error starting video wallpaper service: " + e.message);
+        }
+    }
+
+    _stopVideoWallpaperService() {
+        if (this._videoWallpaperProxy) {
+            try {
+                this._videoWallpaperProxy.call_sync("stop", null, Gio.DBusCallFlags.NONE, -1, null);
+            } catch (e) {
+                if (LOGGING) global.log("BackgroundManager: Error stopping video wallpaper: " + e.message);
+            }
+        }
+        if (LOGGING) global.log("BackgroundManager: Stopped video wallpaper service");
     }
 };

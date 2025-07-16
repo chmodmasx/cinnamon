@@ -740,6 +740,34 @@
         This key defines the delay for the slideshow.
       </description>
     </key>
+    <key name="video-wallpaper-enabled" type="b">
+      <default>false</default>
+      <summary>Enable video wallpapers</summary>
+      <description>
+        Whether to use video files as live wallpapers instead of static images.
+      </description>
+    </key>
+    <key name="video-wallpaper-uri" type="s">
+      <default>""</default>
+      <summary>Video wallpaper file</summary>
+      <description>
+        Path to the video file to use as wallpaper.
+      </description>
+    </key>
+    <key name="video-wallpaper-loop" type="b">
+      <default>true</default>
+      <summary>Loop video wallpaper</summary>
+      <description>
+        Whether to loop the video wallpaper continuously.
+      </description>
+    </key>
+    <key name="video-wallpaper-volume" type="d">
+      <default>0.0</default>
+      <summary>Video wallpaper volume</summary>
+      <description>
+        Volume level for video wallpaper audio (0.0 = muted, 1.0 = full volume).
+      </description>
+    </key>
   </schema>
 
   <schema id="org.cinnamon.desklets" path="/org/cinnamon/desklets/"

@@ -8,6 +8,8 @@ import locale
 import time
 import hashlib
 import mimetypes
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import pickle
 import shutil
 from io import BytesIO
@@ -286,14 +288,29 @@ class Module:
 
             settings = page.add_section(_("Background Settings"))
 
-            size_group = Gtk.SizeGroup.new(Gtk.SizeGroupMode.HORIZONTAL)
-
-            self.sidePage.stack.add_titled(page, "settings", _("Settings"))
-
             widget = GSettingsSwitch(_("Play backgrounds as a slideshow"), "org.cinnamon.desktop.background.slideshow", "slideshow-enabled")
             settings.add_row(widget)
 
             widget = GSettingsSpinButton(_("Delay"), "org.cinnamon.desktop.background.slideshow", "delay", _("minutes"), 1, 1440)
+            settings.add_reveal_row(widget, "org.cinnamon.desktop.background.slideshow", "slideshow-enabled")
+
+            # Video wallpaper section
+            video_settings = page.add_section(_("Video Wallpaper"))
+            
+            widget = GSettingsSwitch(_("Enable video wallpapers"), "org.cinnamon.background", "video-wallpaper-enabled")
+            video_settings.add_row(widget)
+            
+            widget = GSettingsFileChooser(_("Video file"), "org.cinnamon.background", "video-wallpaper-uri", size_group=None)
+            widget.set_tooltip_text(_("Select a video file to use as wallpaper"))
+            video_settings.add_reveal_row(widget, "org.cinnamon.background", "video-wallpaper-enabled")
+            
+            widget = GSettingsSwitch(_("Loop video"), "org.cinnamon.background", "video-wallpaper-loop")
+            video_settings.add_reveal_row(widget, "org.cinnamon.background", "video-wallpaper-enabled")
+            
+            widget = GSettingsRange(_("Volume"), "org.cinnamon.background", "video-wallpaper-volume", _("Volume level for video wallpaper"), 0.0, 1.0, 0.1, 0.01)
+            video_settings.add_reveal_row(widget, "org.cinnamon.background", "video-wallpaper-enabled")
+
+            size_group = Gtk.SizeGroup.new(Gtk.SizeGroupMode.HORIZONTAL)
             settings.add_reveal_row(widget, "org.cinnamon.desktop.background.slideshow", "slideshow-enabled")
 
             widget = GSettingsSwitch(_("Play images in random order"), "org.cinnamon.desktop.background.slideshow", "random-order")
@@ -573,11 +590,54 @@ class PixCache(object):
     def __init__(self):
         self._data = {}
 
-    def get_pix(self, filename, size=None):
+    def _generate_video_thumbnail(self, video_path, size):
+        """Generate a thumbnail for video files using GStreamer or ffmpeg"""
+        try:
+            # Try using ffmpeg first (more reliable for thumbnails)
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            
+            # Use ffmpeg to extract frame at 5 seconds
+            cmd = [
+                'ffmpeg', '-i', video_path, 
+                '-ss', '5', '-vframes', '1', 
+                '-f', 'image2', '-y', tmp_path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, timeout=10)
+            
+            if result.returncode == 0 and os.path.exists(tmp_path):
+                # Load the generated thumbnail
+                pixbuf = GdkPixbuf.Pixbuf.new_from_file(tmp_path)
+                os.unlink(tmp_path)  # Clean up
+                
+                # Resize if needed
+                if size and (pixbuf.get_width() != size or pixbuf.get_height() != size):
+                    pixbuf = pixbuf.scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR)
+                
+                return pixbuf
+            else:
+                os.unlink(tmp_path)  # Clean up even on failure
+                
+        except Exception as e:
+            print(f"Error generating video thumbnail: {e}")
+        
+        # Fallback: return a generic video icon
+        try:
+            icon_theme = Gtk.IconTheme.get_default()
+            return icon_theme.load_icon("video-x-generic", size or 128, 0)
+        except:
+            return None
         if filename is None:
             return None
         mimetype = mimetypes.guess_type(filename)[0]
-        if mimetype is None or not mimetype.startswith("image/"):
+        
+        # Support both images and videos
+        is_image = mimetype and mimetype.startswith("image/")
+        is_video = mimetype and mimetype.startswith("video/")
+        
+        if not (is_image or is_video):
             return None
 
         if filename not in self._data:
@@ -609,7 +669,23 @@ class PixCache(object):
                         os.remove(cache_filename)
 
                 if not loaded:
-                    if mimetype in ("image/svg+xml", "image/avif", "image/jxl"):
+                    if is_video:
+                        # Generate video thumbnail
+                        tmp_pix = self._generate_video_thumbnail(filename, size)
+                        if tmp_pix:
+                            width = tmp_pix.get_width()
+                            height = tmp_pix.get_height()
+                            
+                            # Convert pixbuf to PIL Image for processing
+                            data = tmp_pix.get_pixels()
+                            w, h = tmp_pix.get_width(), tmp_pix.get_height()
+                            img = Image.frombytes("RGB", (w, h), data, "raw", "RGB", tmp_pix.get_rowstride())
+                        else:
+                            # Fallback to generic video icon
+                            pix = [None, 128, 128]
+                            self._data[filename][size] = pix
+                            return pix[0]
+                    elif mimetype in ("image/svg+xml", "image/avif", "image/jxl"):
                         # rasterize svg with Gdk-Pixbuf and convert to PIL Image
                         tmp_pix = GdkPixbuf.Pixbuf.new_from_file(filename)
                         mode = "RGBA" if tmp_pix.props.has_alpha else "RGB"
@@ -630,11 +706,16 @@ class PixCache(object):
                     if size:
                         img.thumbnail((size, size), Image.LANCZOS)
 
-                    import imtools
-                    img = imtools.round_image(img, {}, False, None, 3, 255)
-                    img = imtools.drop_shadow(img, 4, 4, background_color=(255, 255, 255, 0),
-                                              shadow_color=0x444444, border=8, shadow_blur=3,
-                                              force_background_color=False, cache=None)
+                    # Apply styling (only for images, videos already have video icon styling)
+                    if not is_video:
+                        try:
+                            import imtools
+                            img = imtools.round_image(img, {}, False, None, 3, 255)
+                            img = imtools.drop_shadow(img, 4, 4, background_color=(255, 255, 255, 0),
+                                                      shadow_color=0x444444, border=8, shadow_blur=3,
+                                                      force_background_color=False, cache=None)
+                        except ImportError:
+                            pass  # imtools not available, skip styling
 
                     # save to disk cache
                     try:

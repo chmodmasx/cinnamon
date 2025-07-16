@@ -1,0 +1,13 @@
+#!/usr/bin/python3
+import sys
+import os
+
+# Add the cinnamon-video-wallpaper directory to Python path
+sys.path.insert(0, '/usr/share/cinnamon/cinnamon-video-wallpaper')
+
+# Import and run the application
+from cinnamon-video-wallpaper import CinnamonVideoWallpaperApplication
+
+if __name__ == "__main__":
+    app = CinnamonVideoWallpaperApplication()
+    app.run()
