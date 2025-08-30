@@ -20,7 +20,7 @@ from pathlib import Path
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('XApp', '1.0')
-from gi.repository import Gio, Gtk, Pango, Gdk, XApp
+from gi.repository import Gio, GLib, Gtk, Pango, Gdk, XApp
 
 CURRENT_PATH = os.path.dirname(os.path.abspath(__file__))
 PYTHON_CS_MODULE_PATH = os.path.join(CURRENT_PATH, "modules")
@@ -77,6 +77,7 @@ CONTROL_CENTER_MODULES = [
 STANDALONE_MODULES = [
     # Label                           Executable                              Icon                        Category      Keywords for filter
     [_("Printers"),                   "system-config-printer",                "cs-printer",                "hardware",   _("printers, laser, inkjet")],
+    [_("Fingerprints"),               "fingwit",                              "fingwit",                   "admin",      _("fingerprint")],
     [_("Firewall"),                   "gufw",                                 "cs-firewall",               "admin",      _("firewall, block, filter, programs")],
     [_("Firewall"),                   "firewall-config",                      "cs-firewall",               "admin",      _("firewall, block, filter, programs")],
     [_("Languages"),                  "mintlocale",                           "cs-language",               "prefs",      _("language, install, foreign")],
@@ -301,6 +302,7 @@ class MainWindow(Gio.Application):
         self.search_entry.connect("icon-press", self.onClearSearchBox)
 
         self.window.connect("destroy", self._quit)
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, self._quit)
 
         self.builder.connect_signals(self)
         self.sidePages: typing.List[SidePageData] = []
